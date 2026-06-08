@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+
+# IDEs
+.vscode/
+.idea/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Spark
+metastore_db/
+spark-warehouse/
+derby.log
+
+# Local Data
+data/
+local/
+
+# Output Files
+output/
+outputs/
+tmp/
+temp/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build Artifacts
+build/
+dist/
+*.egg-info/
+
+# AWS
+.aws/
+
+# Mac/Linux temp files
+*.swp
+*.swo
+
+# Parquet / Data Files
+*.parquet
+*.csv
+*.jsonl
+
+# Chroma DB
+chroma/
+chromadb/
