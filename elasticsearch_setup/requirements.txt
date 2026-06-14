@@ -1,0 +1,5 @@
+elasticsearch==8.19.1
+boto3
+pandas
+pyarrow
+tqdm
