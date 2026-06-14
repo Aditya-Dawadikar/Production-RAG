@@ -95,6 +95,64 @@ All configuration is read from environment variables (via `.env`, see
 > to apply new values you need to rebuild the collection (see
 > `chromadb_setup/src/init_chroma_from_s3.py --mode rebuild_from_embeddings`).
 
+`.env` is git-ignored — never commit real secrets (`GROQ_API_KEY`, AWS keys).
+Only `.env.example` (with placeholder values) is tracked.
+
+## EC2 deployment requirements
+
+### Instance specs
+
+Minimum recommended: **`t3.large`** (2 vCPU / 8 GB RAM), Ubuntu 22.04/24.04 LTS.
+
+- Elasticsearch heap is fixed at `-Xms1g -Xmx1g` by `setup_elasticsearch.sh`;
+  ES also wants roughly that much again free for filesystem cache.
+- The FastAPI process loads the `sentence-transformers` embedding model and
+  the FlashRank reranker model into memory (~1 GB combined).
+- Chroma's HNSW index is loaded in memory; its size scales with corpus size
+  and `CHROMA_HNSW_*` params — size up for larger corpora.
+
+**Storage**: at least 30 GB gp3 EBS (OS, apt packages, venv, HF model cache,
+Elasticsearch data dir, Chroma persistent dir). Increase to match the size of
+the restored Chroma DB / Elasticsearch index.
+
+### Security group
+
+| Port | Protocol | Source | Purpose |
+| --- | --- | --- | --- |
+| 22 | TCP | your IP / bastion only | SSH admin access |
+| 8000 | TCP | clients / load balancer | FastAPI (`uvicorn`) |
+| 9200 | TCP | self (security group only) | Elasticsearch — `setup_elasticsearch.sh` disables `xpack.security`, so this port must **never** be exposed to `0.0.0.0/0` |
+
+**Outbound**: allow `443`/`80` to the internet — required for `apt` package
+installs, S3 access, Hugging Face model downloads (sentence-transformers /
+FlashRank), and the Groq API.
+
+### IAM permissions
+
+Attach an IAM instance profile granting read access to `S3_BUCKET`, used by
+`setup/ingest_es_from_s3.py` and `setup/restore_chroma_from_s3.py`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::prod-rag-bucket"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::prod-rag-bucket/*"
+    }
+  ]
+}
+```
+
+`boto3` picks these up automatically from the instance profile — no AWS
+access keys need to be set in `.env`.
+
 ## Quick start (EC2 / fresh Ubuntu host)
 
 ```bash
