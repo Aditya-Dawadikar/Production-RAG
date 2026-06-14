@@ -24,7 +24,8 @@ def download_s3_prefix(bucket: str, prefix: str, local_dir: str):
     s3 = boto3.client("s3")
     paginator = s3.get_paginator("list_objects_v2")
 
-    Path(local_dir).mkdir(parents=True, exist_ok=True)
+    local_root = Path(local_dir).resolve()
+    local_root.mkdir(parents=True, exist_ok=True)
 
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
@@ -34,7 +35,11 @@ def download_s3_prefix(bucket: str, prefix: str, local_dir: str):
                 continue
 
             relative_path = key[len(prefix):].lstrip("/")
-            local_path = Path(local_dir) / relative_path
+            local_path = (local_root / relative_path).resolve()
+
+            if not local_path.is_relative_to(local_root):
+                raise ValueError(f"Refusing to restore outside chroma dir: {key}")
+
             local_path.parent.mkdir(parents=True, exist_ok=True)
 
             print(f"Downloading s3://{bucket}/{key} -> {local_path}")

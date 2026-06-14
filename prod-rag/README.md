@@ -121,7 +121,7 @@ the restored Chroma DB / Elasticsearch index.
 | --- | --- | --- | --- |
 | 22 | TCP | your IP / bastion only | SSH admin access |
 | 8000 | TCP | clients / load balancer | FastAPI (`uvicorn`) |
-| 9200 | TCP | self (security group only) | Elasticsearch — `setup_elasticsearch.sh` disables `xpack.security`, so this port must **never** be exposed to `0.0.0.0/0` |
+| 9200 | TCP | self (security group only) | Elasticsearch — `setup_elasticsearch.sh` binds ES to `127.0.0.1` and disables `xpack.security`, so this port is not reachable from outside the host; the SG rule is defense-in-depth and should **never** be opened to `0.0.0.0/0` |
 
 **Outbound**: allow `443`/`80` to the internet — required for `apt` package
 installs, S3 access, Hugging Face model downloads (sentence-transformers /

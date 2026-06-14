@@ -45,7 +45,7 @@ node.name: rag-es-node-1
 path.data: /var/lib/elasticsearch
 path.logs: /var/log/elasticsearch
 
-network.host: 0.0.0.0
+network.host: 127.0.0.1
 http.port: 9200
 
 discovery.type: single-node
