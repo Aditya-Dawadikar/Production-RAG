@@ -1,5 +1,6 @@
 # src/rag.py
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -19,6 +20,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 class RAGClient:
     def __init__(self):
         self.retriever = retriever
@@ -33,16 +38,19 @@ class RAGClient:
             raise ValueError("Query cannot be empty")
 
         query = query.strip()
-        logger.info("Pipeline start | query=%r", query)
+        query_digest = _digest(query)
+
+        logger.info("Pipeline start | query_sha256=%s query_len=%d", query_digest, len(query))
+        logger.debug("Pipeline start | query=%r", query)
 
         logger.info("[1/3] Retrieval | top_k=%d", self.retrieval_top_k)
         candidates = self.retriever.retrieve(
             query=query,
             top_k=self.retrieval_top_k,
         )
-        logger.info(
-            "[1/3] Retrieval done | candidates=%d ids=%s",
-            len(candidates),
+        logger.info("[1/3] Retrieval done | candidates=%d", len(candidates))
+        logger.debug(
+            "[1/3] Retrieval done | ids=%s",
             [c.get("id") for c in candidates],
         )
 
@@ -53,10 +61,13 @@ class RAGClient:
             top_k=self.rerank_top_k,
         )
         logger.info(
-            "[2/3] Reranking done | contexts=%d ids=%s scores=%s",
+            "[2/3] Reranking done | contexts=%d scores=%s",
             len(ranked_contexts),
-            [c.get("id") for c in ranked_contexts],
             [round(c.get("score", 0.0), 4) for c in ranked_contexts],
+        )
+        logger.debug(
+            "[2/3] Reranking done | ids=%s",
+            [c.get("id") for c in ranked_contexts],
         )
 
         logger.info("[3/3] LLM generation | model=%s", self.llm_client.model_name)
@@ -64,7 +75,12 @@ class RAGClient:
             query=query,
             contexts=ranked_contexts,
         )
-        logger.info("[3/3] LLM generation done | answer=%r", answer)
+        logger.info(
+            "[3/3] LLM generation done | answer_sha256=%s answer_len=%d",
+            _digest(answer),
+            len(answer),
+        )
+        logger.debug("[3/3] LLM generation done | answer=%r", answer)
 
         result = {
             "query": query,
@@ -78,7 +94,7 @@ class RAGClient:
             },
         }
 
-        logger.info("Pipeline done | query=%r", query)
+        logger.info("Pipeline done | query_sha256=%s", query_digest)
 
         return result
 
