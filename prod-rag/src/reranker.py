@@ -53,12 +53,12 @@ class Reranker:
                     "id": item.get("id"),
                     "text": item.get("text", ""),
                     "metadata": item.get("metadata", {}),
-                    "score": item.get("score", 0.0),
-                    "rerank_score": item.get("score", 0.0),
-                    "original_score": item.get("original_score", 0.0),
+                    "score": float(item.get("score", 0.0)),
+                    "rerank_score": float(item.get("score", 0.0)),
+                    "original_score": float(item.get("original_score", 0.0)),
                     "retrieval_sources": item.get("retrieval_sources", []),
-                    "semantic_score": item.get("semantic_score", 0.0),
-                    "keyword_score": item.get("keyword_score", 0.0),
+                    "semantic_score": float(item.get("semantic_score", 0.0)),
+                    "keyword_score": float(item.get("keyword_score", 0.0)),
                     "source": "reranker",
                 }
             )

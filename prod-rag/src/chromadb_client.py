@@ -57,7 +57,7 @@ class ChromaDBClient:
                 "id": chunk_id,
                 "text": text,
                 "metadata": metadata or {},
-                "score": 1 / (1 + distance),
+                "score": float(1 / (1 + distance)),
                 "source": "chroma",
             }
             for chunk_id, text, metadata, distance in zip(
