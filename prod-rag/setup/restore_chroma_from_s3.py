@@ -14,10 +14,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CHROMA_DIR = os.getenv("CHROMA_DIR", "./local/chroma")
-CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "wiki_chunks")
+CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "wiki")
 
 S3_BUCKET = os.getenv("S3_BUCKET", "prod-rag-bucket")
-S3_PREFIX = os.getenv("CHROMA_BACKUP_S3_PREFIX", "wiki-chroma-backup")
+S3_PREFIX = os.getenv("CHROMA_BACKUP_S3_PREFIX", "chroma-db/")
 
 
 def download_s3_prefix(bucket: str, prefix: str, local_dir: str):
