@@ -48,7 +48,11 @@ def rebuild_chroma_from_embedding_parquet(args):
 
     collection = client.get_or_create_collection(
         name=args.collection,
-        metadata={"hnsw:space": "cosine"},
+        metadata={
+            "hnsw:space": "cosine",
+            "hnsw:construction_ef": args.hnsw_construction_ef,
+            "hnsw:search_ef": args.hnsw_search_ef,
+        },
     )
 
     df = pd.read_parquet(args.embeddings_s3_path)
@@ -118,6 +122,8 @@ def main():
     parser.add_argument("--chroma_dir", default="./chroma_db")
     parser.add_argument("--collection", default="wiki")
     parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--hnsw_construction_ef", type=int, default=200)
+    parser.add_argument("--hnsw_search_ef", type=int, default=100)
 
     args = parser.parse_args()
 
