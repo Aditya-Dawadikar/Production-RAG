@@ -1,5 +1,6 @@
 # src/rag.py
 
+import logging
 import os
 from typing import Any
 
@@ -10,6 +11,12 @@ from src.reranker import reranker
 from src.retriever import retriever
 
 load_dotenv()
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 class RAGClient:
@@ -26,24 +33,40 @@ class RAGClient:
             raise ValueError("Query cannot be empty")
 
         query = query.strip()
+        logger.info("Pipeline start | query=%r", query)
 
+        logger.info("[1/3] Retrieval | top_k=%d", self.retrieval_top_k)
         candidates = self.retriever.retrieve(
             query=query,
             top_k=self.retrieval_top_k,
         )
+        logger.info(
+            "[1/3] Retrieval done | candidates=%d ids=%s",
+            len(candidates),
+            [c.get("id") for c in candidates],
+        )
 
+        logger.info("[2/3] Reranking | top_k=%d", self.rerank_top_k)
         ranked_contexts = self.reranker.rerank(
             query=query,
             passages=candidates,
             top_k=self.rerank_top_k,
         )
+        logger.info(
+            "[2/3] Reranking done | contexts=%d ids=%s scores=%s",
+            len(ranked_contexts),
+            [c.get("id") for c in ranked_contexts],
+            [round(c.get("score", 0.0), 4) for c in ranked_contexts],
+        )
 
+        logger.info("[3/3] LLM generation | model=%s", self.llm_client.model_name)
         answer = self.llm_client.generate_answer(
             query=query,
             contexts=ranked_contexts,
         )
+        logger.info("[3/3] LLM generation done | answer=%r", answer)
 
-        return {
+        result = {
             "query": query,
             "answer": answer,
             "sources": ranked_contexts,
@@ -54,6 +77,10 @@ class RAGClient:
                 "num_contexts": len(ranked_contexts),
             },
         }
+
+        logger.info("Pipeline done | query=%r", query)
+
+        return result
 
 
 rag_client = RAGClient()
