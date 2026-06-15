@@ -56,12 +56,18 @@ prod-rag/
 │   ├── llm_client.py            # ChatGroq + prompt loading
 │   ├── prompts/rag.md           # RAG prompt template
 │   ├── prompts/eval_qa_gen.md   # eval dataset Q&A generation prompt
+│   ├── prompts/eval_hallucination_qa_gen.md # hallucination-trap Q&A generation prompt
 │   └── data_models/Inference.py # Pydantic request/response models
 ├── setup/                       # EC2 provisioning & data population scripts
 ├── evals/
-│   ├── dataset/wiki_eval_dataset.json # eval Q&A benchmark (committed)
+│   ├── dataset/
+│   │   ├── wiki_eval_dataset.json            # answerable eval benchmark (committed)
+│   │   ├── wiki_eval_unanswerable.json       # out-of-corpus eval questions (committed)
+│   │   └── wiki_eval_hallucination_trap.json # hallucination-trap eval questions (committed)
+│   ├── corpus_utils.py          # shared passage-sampling/JSON-parsing helpers
 │   ├── generate_dataset.py      # samples corpus, generates Q&A via Groq
-│   ├── run_evals.py              # Ragas + OpenEvals eval runner
+│   ├── generate_hallucination_dataset.py # generates hallucination-trap questions via Groq
+│   ├── run_evals.py              # Ragas + OpenEvals eval runner (3 categories)
 │   ├── requirements.txt          # eval-only deps
 │   └── results/                  # per-run JSON reports (git-ignored)
 ├── tests/                       # (planned)
@@ -98,6 +104,9 @@ All configuration is read from environment variables (via `.env`, see
 | `EVAL_SAMPLE_SIZE` | `20` | Number of Q&A pairs `generate_dataset.py` produces |
 | `EVAL_RESULTS_DIR` | `evals/results` | Directory eval run reports are written to |
 | `EVAL_WIKI_DATASET_DIR` | `../wiki_dataset/plain-text-wikipedia-simpleenglish` | Raw corpus dir `generate_dataset.py` samples passages from |
+| `EVAL_UNANSWERABLE_DATASET_PATH` | `evals/dataset/wiki_eval_unanswerable.json` | Path to the hand-curated out-of-corpus eval questions |
+| `EVAL_HALLUCINATION_DATASET_PATH` | `evals/dataset/wiki_eval_hallucination_trap.json` | Path to the generated hallucination-trap eval questions |
+| `EVAL_HALLUCINATION_SAMPLE_SIZE` | `10` | Number of questions `generate_hallucination_dataset.py` produces |
 
 > **Note on HNSW params:** `hnsw:construction_ef` and `hnsw:search_ef` only take
 > effect when a Chroma collection is first created. Restoring an existing
@@ -255,36 +264,63 @@ Install eval-only dependencies (kept separate from the prod
 pip install -r requirements.txt -r evals/requirements.txt
 ```
 
-### Generating the eval dataset
+### Eval categories
+
+`run_evals.py` evaluates three categories of questions, each with its own
+dataset and metric set:
+
+- **`answerable`** (`wiki_eval_dataset.json`) - in-corpus questions with a
+  known reference answer. Scored on retrieval quality
+  (`LLMContextPrecisionWithReference`, `LLMContextRecall`,
+  `retrieval_relevance`) and answer quality (`Faithfulness`,
+  `ResponseRelevancy`, `correctness`).
+- **`unanswerable`** (`wiki_eval_unanswerable.json`, hand-curated) -
+  questions with no relevant source in the corpus at all. The pipeline
+  should say it doesn't know rather than answer anyway.
+- **`hallucination_trap`** (`wiki_eval_hallucination_trap.json`, generated) -
+  questions about an in-corpus topic asking for a specific detail
+  (date/number/name/award/location) that the retrieved passage does not
+  state. Tests whether the model fabricates the missing detail.
+
+`unanswerable` and `hallucination_trap` are scored on `Faithfulness`,
+`retrieval_relevance`, and `hallucination` (via OpenEvals'
+`HALLUCINATION_PROMPT`, which rewards appropriately indicating uncertainty
+and penalizes fabricated dates/numbers/names).
+
+### Generating the eval datasets
 
 ```bash
 python evals/generate_dataset.py
+python evals/generate_hallucination_dataset.py
 ```
 
-Samples `EVAL_SAMPLE_SIZE` random 200-word passages from the raw corpus at
+Both sample random 200-word passages from the raw corpus at
 `EVAL_WIKI_DATASET_DIR` (no Chroma/Elasticsearch needed - only
-`GROQ_API_KEY`), asks the Groq LLM to generate a question + reference answer
-per passage (`src/prompts/eval_qa_gen.md`), and writes
-`evals/dataset/wiki_eval_dataset.json`. This is committed to git as a fixed
-benchmark set; re-run only when the corpus changes significantly.
+`GROQ_API_KEY`) and ask the Groq LLM to generate eval items:
+
+- `generate_dataset.py` generates `EVAL_SAMPLE_SIZE` question + reference
+  answer pairs (`src/prompts/eval_qa_gen.md`) and writes
+  `evals/dataset/wiki_eval_dataset.json`.
+- `generate_hallucination_dataset.py` generates `EVAL_HALLUCINATION_SAMPLE_SIZE`
+  question + missing-detail pairs (`src/prompts/eval_hallucination_qa_gen.md`)
+  and writes `evals/dataset/wiki_eval_hallucination_trap.json`.
+
+Both outputs are committed to git as fixed benchmark sets; re-run only when
+the corpus changes significantly. `wiki_eval_unanswerable.json` is a fixed,
+hand-curated list - grow it by editing the file directly.
 
 ### Running the evals
 
 ```bash
-python evals/run_evals.py --limit 2   # fast smoke test
+python evals/run_evals.py --limit 2   # fast smoke test (2 items per category)
 python evals/run_evals.py             # full dataset
 ```
 
 Requires a populated Chroma collection, a reachable Elasticsearch, and
 `GROQ_API_KEY` (same environment as running the FastAPI server). For each
-question, runs `rag_client.answer()` and scores the result with:
-
-- **Ragas**: `LLMContextPrecisionWithReference`, `LLMContextRecall`
-  (retrieval), `Faithfulness`, `ResponseRelevancy` (generation)
-- **OpenEvals**: `RAG_RETRIEVAL_RELEVANCE_PROMPT` (retrieval),
-  `CORRECTNESS_PROMPT` (generation)
-
-Prints a per-question table with a final `MEAN` row, and writes a full JSON
-report to `EVAL_RESULTS_DIR/<timestamp>.json` (git-ignored). Errors for a
-given question (e.g. Groq rate limits) are recorded per-question without
-aborting the run - purely observational, no pass/fail gating.
+category, runs `rag_client.answer()` per question, prints a per-question
+table with a final `MEAN` row, and writes one combined JSON report to
+`EVAL_RESULTS_DIR/<timestamp>.json` (git-ignored) with a `categories` key
+covering all three category results and means. Errors for a given question
+(e.g. Groq rate limits) are recorded per-question without aborting the run -
+purely observational, no pass/fail gating.
