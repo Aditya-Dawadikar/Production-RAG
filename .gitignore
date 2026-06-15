@@ -70,3 +70,7 @@ chromadb/
 
 # Eval run reports
 evals/results/
+
+# Raw wiki dataset (download separately, see wiki_dataset/README.md)
+wiki_dataset/*
+!wiki_dataset/README.md
