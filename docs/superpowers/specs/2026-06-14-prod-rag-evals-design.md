@@ -46,15 +46,22 @@ One-time / occasional script, run manually when the corpus changes
 significantly. Output is committed to git so `run_evals.py` always
 evaluates against a fixed, comparable benchmark set.
 
-1. Connect to the live Chroma collection via
-   `src.chromadb_client.chromadb_client` (uses existing `CHROMA_DIR` /
-   `CHROMA_COLLECTION` env config).
-2. Pick `EVAL_SAMPLE_SIZE` (default `20`) random chunks. Use
-   `collection.count()` to get the corpus size, then for each sample pick a
-   random offset in `[0, count)` and call
-   `collection.get(limit=1, offset=offset, include=["documents", "metadatas"])`.
-   This avoids loading the full ~512k-vector collection into memory.
-3. For each sampled chunk, prompt the Groq LLM (`GROQ_MODEL`, via
+Source data is the raw corpus at `wiki_dataset/plain-text-wikipedia-simpleenglish/`
+(repo root, sibling of `prod-rag/`, tracked in git) — the same input
+`spark-preprocessing/src/preprocess_wiki.py` chunks for the production
+index. Using this directly means `generate_dataset.py` needs **no live
+Chroma/ES connection** — only `GROQ_API_KEY`.
+
+1. List all files under `1of2/` and `2of2/` (171 files total:
+   `wiki_00`...`wiki_99` in `1of2`, `wiki_00`...`wiki_70` in `2of2`).
+2. Pick `EVAL_SAMPLE_SIZE` (default `20`) distinct random files. For each:
+   - Read the file and normalize whitespace the same way as
+     `preprocess_wiki.clean_text` (`re.sub(r"\s+", " ", text).strip()`),
+     producing one long word sequence per file (mirrors the
+     `wholetext=True` read in the Spark job).
+   - Pick a random 200-word window (matching the production
+     `chunk_size=200` default) as the source passage.
+3. For each sampled passage, prompt the Groq LLM (`GROQ_MODEL`, via
    `src.llm_client.llm_client.llm`) using a new prompt template
    `src/prompts/eval_qa_gen.md`: given the passage, produce one factual
    question answerable from it and a concise reference answer.
@@ -63,11 +70,13 @@ evaluates against a fixed, comparable benchmark set.
    {
      "question": "...",
      "reference": "...",
-     "source_chunk_id": "...",
-     "source_doc_id": "..."
+     "source_file": "1of2/wiki_07"
    }
    ```
-5. Skip/retry chunks where the LLM fails to produce a usable
+   `source_file` is kept only for debugging/traceability (which raw file the
+   passage came from) — it does not need to match any `doc_id`/`chunk_id`
+   in the live index.
+5. Skip/retry passages where the LLM fails to produce a usable
    question/answer (e.g. malformed output), so the script still converges
    on `EVAL_SAMPLE_SIZE` usable pairs.
 
@@ -76,7 +85,7 @@ evaluates against a fixed, comparable benchmark set.
 1. Load the dataset from `EVAL_DATASET_PATH` (default
    `evals/dataset/wiki_eval_dataset.json`). Optional `--limit N` CLI flag
    runs on the first N items only, for fast iteration.
-2. For each `{question, reference, source_chunk_id, source_doc_id}`:
+2. For each `{question, reference, source_file}`:
    - Call `rag_client.answer(question)` to get `answer` and `sources`.
    - Build a Ragas `SingleTurnSample`:
      - `user_input = question`
@@ -121,11 +130,13 @@ Add to `.env.example` and the README config table:
 | `EVAL_DATASET_PATH` | `evals/dataset/wiki_eval_dataset.json` | Path to the eval Q&A dataset |
 | `EVAL_SAMPLE_SIZE` | `20` | Number of Q&A pairs `generate_dataset.py` produces |
 | `EVAL_RESULTS_DIR` | `evals/results` | Directory eval run reports are written to |
+| `EVAL_WIKI_DATASET_DIR` | `../wiki_dataset/plain-text-wikipedia-simpleenglish` | Raw corpus dir `generate_dataset.py` samples passages from |
 
 All other config (`GROQ_API_KEY`, `GROQ_MODEL`, `EMBEDDING_MODEL_NAME`,
 `RETRIEVAL_TOP_K`, `RERANK_TOP_K`, Chroma/ES settings) is reused as-is from
-the existing `.env`, since both scripts import the already-configured
-`rag_client` / `llm_client` / `chromadb_client`.
+the existing `.env`. `generate_dataset.py` imports the already-configured
+`llm_client`; `run_evals.py` imports `rag_client` (which itself wires up
+`llm_client`, `chromadb_client`, and `elasticsearch_client`).
 
 ## Dependencies
 
@@ -147,18 +158,18 @@ Add `evals/results/` (per-run JSON reports are not committed).
 
 ## Testing / validation
 
-Both scripts require a populated Chroma collection, a reachable
-Elasticsearch (for `run_evals.py`, since `rag_client.answer()` uses hybrid
-retrieval), and a valid `GROQ_API_KEY` — i.e. the same environment as
-running the FastAPI server locally or on the EC2 box.
-
-- `generate_dataset.py`: validate by running once and inspecting
+- `generate_dataset.py` only needs a valid `GROQ_API_KEY` and read access
+  to `wiki_dataset/plain-text-wikipedia-simpleenglish/` (repo root) — no
+  Chroma/ES required. Validate by running once and inspecting
   `wiki_eval_dataset.json` for well-formed, non-empty
-  `question`/`reference`/`source_chunk_id` fields across all
+  `question`/`reference`/`source_file` fields across all
   `EVAL_SAMPLE_SIZE` entries.
-- `run_evals.py`: validate with `--limit 2` first (fast smoke test of the
-  Ragas + OpenEvals wiring and console/JSON output), then run on the full
-  dataset.
+- `run_evals.py` requires a populated Chroma collection, a reachable
+  Elasticsearch (since `rag_client.answer()` uses hybrid retrieval), and a
+  valid `GROQ_API_KEY` — the same environment as running the FastAPI server
+  locally or on the EC2 box. Validate with `--limit 2` first (fast smoke
+  test of the Ragas + OpenEvals wiring and console/JSON output), then run on
+  the full dataset.
 
 ## Out of scope / future work
 
