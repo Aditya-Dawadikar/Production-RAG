@@ -27,7 +27,11 @@ import pandas as pd  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 from langchain_huggingface import HuggingFaceEmbeddings  # noqa: E402
 from openevals.llm import create_llm_as_judge  # noqa: E402
-from openevals.prompts import CORRECTNESS_PROMPT, RAG_RETRIEVAL_RELEVANCE_PROMPT  # noqa: E402
+from openevals.prompts import (  # noqa: E402
+    CORRECTNESS_PROMPT,
+    HALLUCINATION_PROMPT,
+    RAG_RETRIEVAL_RELEVANCE_PROMPT,
+)
 from ragas import EvaluationDataset, SingleTurnSample, evaluate  # noqa: E402
 from ragas.embeddings import LangchainEmbeddingsWrapper  # noqa: E402
 from ragas.llms import LangchainLLMWrapper  # noqa: E402
@@ -55,6 +59,8 @@ RAGAS_METRICS = [
     Faithfulness(),
     ResponseRelevancy(),
 ]
+
+ROBUSTNESS_RAGAS_METRICS = [Faithfulness()]
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,23 +103,29 @@ def build_openevals_judges():
         feedback_key="correctness",
         continuous=True,
     )
+    hallucination = create_llm_as_judge(
+        prompt=HALLUCINATION_PROMPT,
+        judge=llm_client.llm,
+        feedback_key="hallucination",
+        continuous=True,
+    )
 
-    return retrieval_relevance, correctness
+    return retrieval_relevance, correctness, hallucination
 
 
-def evaluate_ragas(sample, evaluator_llm, evaluator_embeddings) -> dict:
+def evaluate_ragas(sample, metrics, evaluator_llm, evaluator_embeddings) -> dict:
     dataset = EvaluationDataset(samples=[sample])
 
     result = evaluate(
         dataset=dataset,
-        metrics=RAGAS_METRICS,
+        metrics=metrics,
         llm=evaluator_llm,
         embeddings=evaluator_embeddings,
     )
 
     row = result.to_pandas().iloc[0]
 
-    return {metric.name: float(row[metric.name]) for metric in RAGAS_METRICS}
+    return {metric.name: float(row[metric.name]) for metric in metrics}
 
 
 def evaluate_openevals(item, answer, retrieved_contexts, retrieval_relevance, correctness) -> dict:
@@ -132,27 +144,51 @@ def evaluate_openevals(item, answer, retrieved_contexts, retrieval_relevance, co
     }
 
 
-def run_single(item, evaluator_llm, evaluator_embeddings, retrieval_relevance, correctness) -> dict:
+def evaluate_robustness_openevals(item, answer, retrieved_contexts, retrieval_relevance, hallucination) -> dict:
+    context_text = "\n\n".join(retrieved_contexts)
+
+    relevance_result = retrieval_relevance(inputs=item["question"], context=context_text)
+    hallucination_result = hallucination(
+        inputs=item["question"], outputs=answer, context=context_text, reference_outputs="",
+    )
+
+    return {
+        "retrieval_relevance": float(relevance_result["score"]),
+        "hallucination": float(hallucination_result["score"]),
+    }
+
+
+def run_single(item, category, evaluator_llm, evaluator_embeddings, retrieval_relevance, correctness, hallucination) -> dict:
     pipeline_result = rag_client.answer(item["question"])
 
     answer = pipeline_result["answer"]
     retrieved_contexts = [source["text"] for source in pipeline_result["sources"]]
 
-    sample = SingleTurnSample(
-        user_input=item["question"],
-        response=answer,
-        retrieved_contexts=retrieved_contexts,
-        reference=item["reference"],
-    )
-
-    scores = evaluate_ragas(sample, evaluator_llm, evaluator_embeddings)
-    scores.update(
-        evaluate_openevals(item, answer, retrieved_contexts, retrieval_relevance, correctness)
-    )
+    if category == "answerable":
+        sample = SingleTurnSample(
+            user_input=item["question"],
+            response=answer,
+            retrieved_contexts=retrieved_contexts,
+            reference=item["reference"],
+        )
+        scores = evaluate_ragas(sample, RAGAS_METRICS, evaluator_llm, evaluator_embeddings)
+        scores.update(
+            evaluate_openevals(item, answer, retrieved_contexts, retrieval_relevance, correctness)
+        )
+    else:
+        sample = SingleTurnSample(
+            user_input=item["question"],
+            response=answer,
+            retrieved_contexts=retrieved_contexts,
+        )
+        scores = evaluate_ragas(sample, ROBUSTNESS_RAGAS_METRICS, evaluator_llm, evaluator_embeddings)
+        scores.update(
+            evaluate_robustness_openevals(item, answer, retrieved_contexts, retrieval_relevance, hallucination)
+        )
 
     return {
         "question": item["question"],
-        "reference": item["reference"],
+        "reference": item.get("reference"),
         "source_file": item.get("source_file"),
         "answer": answer,
         "retrieved_contexts": retrieved_contexts,
