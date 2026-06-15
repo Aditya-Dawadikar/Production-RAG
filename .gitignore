@@ -67,3 +67,6 @@ dist/
 # Chroma DB
 chroma/
 chromadb/
+
+# Eval run reports
+evals/results/

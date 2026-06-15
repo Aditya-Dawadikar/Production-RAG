@@ -55,9 +55,15 @@ prod-rag/
 │   ├── reranker.py              # FlashRank reranker
 │   ├── llm_client.py            # ChatGroq + prompt loading
 │   ├── prompts/rag.md           # RAG prompt template
+│   ├── prompts/eval_qa_gen.md   # eval dataset Q&A generation prompt
 │   └── data_models/Inference.py # Pydantic request/response models
 ├── setup/                       # EC2 provisioning & data population scripts
-├── evals/                       # evaluation dataset + eval runner (WIP)
+├── evals/
+│   ├── dataset/wiki_eval_dataset.json # eval Q&A benchmark (committed)
+│   ├── generate_dataset.py      # samples corpus, generates Q&A via Groq
+│   ├── run_evals.py              # Ragas + OpenEvals eval runner
+│   ├── requirements.txt          # eval-only deps
+│   └── results/                  # per-run JSON reports (git-ignored)
 ├── tests/                       # (planned)
 ├── requirements.txt
 └── .env.example
@@ -88,6 +94,10 @@ All configuration is read from environment variables (via `.env`, see
 | `ES_INGEST_S3_PREFIX` | `wiki-chunks` | S3 prefix containing Elasticsearch ingestion parquet files |
 | `ES_INGEST_BATCH_SIZE` | `1000` | Bulk batch size for Elasticsearch ingestion |
 | `CHROMA_BACKUP_S3_PREFIX` | `wiki-chroma-backup` | S3 prefix containing the Chroma DB backup |
+| `EVAL_DATASET_PATH` | `evals/dataset/wiki_eval_dataset.json` | Path to the eval Q&A dataset |
+| `EVAL_SAMPLE_SIZE` | `20` | Number of Q&A pairs `generate_dataset.py` produces |
+| `EVAL_RESULTS_DIR` | `evals/results` | Directory eval run reports are written to |
+| `EVAL_WIKI_DATASET_DIR` | `../wiki_dataset/plain-text-wikipedia-simpleenglish` | Raw corpus dir `generate_dataset.py` samples passages from |
 
 > **Note on HNSW params:** `hnsw:construction_ef` and `hnsw:search_ef` only take
 > effect when a Chroma collection is first created. Restoring an existing
@@ -234,4 +244,47 @@ Interactive docs are available at `/docs` (Swagger) and `/redoc`.
 
 ## Evals & tests
 
-`evals/` and `tests/` are scaffolded but not yet implemented.
+`evals/` holds retrieval/generation evals built on **Ragas** and
+**OpenEvals**, using the same Groq model (`GROQ_MODEL`) as the production
+pipeline as the LLM-as-judge. `tests/` is scaffolded but not yet implemented.
+
+Install eval-only dependencies (kept separate from the prod
+`requirements.txt`):
+
+```bash
+pip install -r requirements.txt -r evals/requirements.txt
+```
+
+### Generating the eval dataset
+
+```bash
+python evals/generate_dataset.py
+```
+
+Samples `EVAL_SAMPLE_SIZE` random 200-word passages from the raw corpus at
+`EVAL_WIKI_DATASET_DIR` (no Chroma/Elasticsearch needed - only
+`GROQ_API_KEY`), asks the Groq LLM to generate a question + reference answer
+per passage (`src/prompts/eval_qa_gen.md`), and writes
+`evals/dataset/wiki_eval_dataset.json`. This is committed to git as a fixed
+benchmark set; re-run only when the corpus changes significantly.
+
+### Running the evals
+
+```bash
+python evals/run_evals.py --limit 2   # fast smoke test
+python evals/run_evals.py             # full dataset
+```
+
+Requires a populated Chroma collection, a reachable Elasticsearch, and
+`GROQ_API_KEY` (same environment as running the FastAPI server). For each
+question, runs `rag_client.answer()` and scores the result with:
+
+- **Ragas**: `LLMContextPrecisionWithReference`, `LLMContextRecall`
+  (retrieval), `Faithfulness`, `ResponseRelevancy` (generation)
+- **OpenEvals**: `RAG_RETRIEVAL_RELEVANCE_PROMPT` (retrieval),
+  `CORRECTNESS_PROMPT` (generation)
+
+Prints a per-question table with a final `MEAN` row, and writes a full JSON
+report to `EVAL_RESULTS_DIR/<timestamp>.json` (git-ignored). Errors for a
+given question (e.g. Groq rate limits) are recorded per-question without
+aborting the run - purely observational, no pass/fail gating.
