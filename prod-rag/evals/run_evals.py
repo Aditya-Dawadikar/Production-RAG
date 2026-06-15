@@ -50,6 +50,12 @@ load_dotenv(PROD_RAG_ROOT / ".env")
 EVAL_DATASET_PATH = PROD_RAG_ROOT / os.getenv(
     "EVAL_DATASET_PATH", "evals/dataset/wiki_eval_dataset.json"
 )
+EVAL_UNANSWERABLE_DATASET_PATH = PROD_RAG_ROOT / os.getenv(
+    "EVAL_UNANSWERABLE_DATASET_PATH", "evals/dataset/wiki_eval_unanswerable.json"
+)
+EVAL_HALLUCINATION_DATASET_PATH = PROD_RAG_ROOT / os.getenv(
+    "EVAL_HALLUCINATION_DATASET_PATH", "evals/dataset/wiki_eval_hallucination_trap.json"
+)
 EVAL_RESULTS_DIR = PROD_RAG_ROOT / os.getenv("EVAL_RESULTS_DIR", "evals/results")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
@@ -62,17 +68,32 @@ RAGAS_METRICS = [
 
 ROBUSTNESS_RAGAS_METRICS = [Faithfulness()]
 
+CATEGORIES = {
+    "answerable": {
+        "dataset_path": EVAL_DATASET_PATH,
+        "metric_names": [metric.name for metric in RAGAS_METRICS] + ["retrieval_relevance", "correctness"],
+    },
+    "unanswerable": {
+        "dataset_path": EVAL_UNANSWERABLE_DATASET_PATH,
+        "metric_names": [metric.name for metric in ROBUSTNESS_RAGAS_METRICS] + ["retrieval_relevance", "hallucination"],
+    },
+    "hallucination_trap": {
+        "dataset_path": EVAL_HALLUCINATION_DATASET_PATH,
+        "metric_names": [metric.name for metric in ROBUSTNESS_RAGAS_METRICS] + ["retrieval_relevance", "hallucination"],
+    },
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run retrieval/generation evals for prod-rag.")
     parser.add_argument(
-        "--limit", type=int, default=None, help="Only evaluate the first N dataset items."
+        "--limit", type=int, default=None, help="Only evaluate the first N dataset items per category."
     )
     return parser.parse_args()
 
 
-def load_dataset(limit: int | None) -> list[dict]:
-    with open(EVAL_DATASET_PATH, "r", encoding="utf-8") as f:
+def load_dataset(dataset_path: Path, limit: int | None) -> list[dict]:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         items = json.load(f)
 
     if limit is not None:
@@ -222,21 +243,12 @@ def print_console_report(records: list[dict], metric_names: list[str]) -> None:
     print(pd.DataFrame(rows).to_string(index=False))
 
 
-def main():
-    args = parse_args()
+def run_category(category, evaluator_llm, evaluator_embeddings, retrieval_relevance, correctness, hallucination, limit) -> dict:
+    config = CATEGORIES[category]
+    dataset = load_dataset(config["dataset_path"], limit)
 
-    EVAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    dataset = load_dataset(args.limit)
-    print(f"Loaded {len(dataset)} eval items from {EVAL_DATASET_PATH}")
-
-    evaluator_llm, evaluator_embeddings = build_ragas_judges()
-    retrieval_relevance, correctness = build_openevals_judges()
-
-    metric_names = [metric.name for metric in RAGAS_METRICS] + [
-        "retrieval_relevance",
-        "correctness",
-    ]
+    print(f"\n=== {category} ===")
+    print(f"Loaded {len(dataset)} eval items from {config['dataset_path']}")
 
     records = []
 
@@ -245,13 +257,14 @@ def main():
 
         try:
             record = run_single(
-                item, evaluator_llm, evaluator_embeddings, retrieval_relevance, correctness
+                item, category, evaluator_llm, evaluator_embeddings,
+                retrieval_relevance, correctness, hallucination,
             )
         except Exception as exc:
             print(f"  ERROR: {exc}")
             record = {
                 "question": item["question"],
-                "reference": item["reference"],
+                "reference": item.get("reference"),
                 "source_file": item.get("source_file"),
                 "error": f"{type(exc).__name__}: {exc}",
                 "traceback": traceback.format_exc(),
@@ -260,25 +273,44 @@ def main():
         records.append(record)
 
     print()
-    print_console_report(records, metric_names)
+    print_console_report(records, config["metric_names"])
 
     means = {}
-    for metric in metric_names:
+    for metric in config["metric_names"]:
         values = [record["scores"][metric] for record in records if "error" not in record]
         means[metric] = sum(values) / len(values) if values else None
+
+    return {"results": records, "means": means}
+
+
+def main():
+    args = parse_args()
+
+    EVAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    evaluator_llm, evaluator_embeddings = build_ragas_judges()
+    retrieval_relevance, correctness, hallucination = build_openevals_judges()
+
+    categories_report = {}
+
+    for category in CATEGORIES:
+        categories_report[category] = run_category(
+            category, evaluator_llm, evaluator_embeddings,
+            retrieval_relevance, correctness, hallucination, args.limit,
+        )
 
     report = {
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "dataset_path": str(EVAL_DATASET_PATH),
-            "num_items": len(dataset),
+            "dataset_paths": {
+                category: str(config["dataset_path"]) for category, config in CATEGORIES.items()
+            },
             "groq_model": llm_client.model_name,
             "embedding_model": EMBEDDING_MODEL_NAME,
             "retrieval_top_k": rag_client.retrieval_top_k,
             "rerank_top_k": rag_client.rerank_top_k,
         },
-        "results": records,
-        "means": means,
+        "categories": categories_report,
     }
 
     timestamp_slug = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
