@@ -12,7 +12,6 @@ Usage:
 import json
 import os
 import random
-import re
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from dotenv import load_dotenv  # noqa: E402
 from langchain_core.output_parsers import StrOutputParser  # noqa: E402
 from langchain_core.prompts import PromptTemplate  # noqa: E402
 
+from corpus_utils import list_corpus_files, parse_json_response, sample_passage  # noqa: E402
 from src.llm_client import llm_client  # noqa: E402
 
 load_dotenv(PROD_RAG_ROOT / ".env")
@@ -44,43 +44,9 @@ PASSAGE_WORDS = 200
 CORPUS_SUBDIRS = ("1of2", "2of2")
 
 
-def clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip())
-
-
-def list_corpus_files() -> list[Path]:
-    files = []
-
-    for subdir in CORPUS_SUBDIRS:
-        files.extend(sorted((EVAL_WIKI_DATASET_DIR / subdir).iterdir()))
-
-    return files
-
-
-def sample_passage(file_path: Path) -> str | None:
-    raw_text = file_path.read_text(encoding="utf-8", errors="ignore")
-    words = clean_text(raw_text).split()
-
-    if len(words) < PASSAGE_WORDS:
-        return None
-
-    start = random.randint(0, len(words) - PASSAGE_WORDS)
-
-    return " ".join(words[start : start + PASSAGE_WORDS])
-
-
 def parse_qa_response(raw_output: str) -> dict | None:
-    text = raw_output.strip()
-
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[len("json") :]
-        text = text.strip()
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+    data = parse_json_response(raw_output)
+    if data is None:
         return None
 
     question = str(data.get("question", "")).strip()
@@ -100,7 +66,7 @@ def build_qa_chain():
 
 
 def main():
-    corpus_files = list_corpus_files()
+    corpus_files = list_corpus_files(EVAL_WIKI_DATASET_DIR, CORPUS_SUBDIRS)
     random.shuffle(corpus_files)
 
     chain = build_qa_chain()
@@ -111,7 +77,7 @@ def main():
         if len(dataset) >= EVAL_SAMPLE_SIZE:
             break
 
-        passage = sample_passage(file_path)
+        passage = sample_passage(file_path, PASSAGE_WORDS)
         if passage is None:
             continue
 
