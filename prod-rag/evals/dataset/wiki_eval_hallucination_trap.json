@@ -1,0 +1,52 @@
+[
+  {
+    "question": "In what year did Roland Kollmann debut for the Austrian national football team in a match versus a team from South America?",
+    "missing_detail": "debut year vs South American team",
+    "source_file": "2of2/wiki_68"
+  },
+  {
+    "question": "What was the name of the movie where Natalia Krachkovskaya became famous in the 1970s, besides 'The Twelve Chairs'?",
+    "missing_detail": "second movie title",
+    "source_file": "2of2/wiki_03"
+  },
+  {
+    "question": "What is the name of the park's superintendent in 2021?",
+    "missing_detail": "park superintendent name",
+    "source_file": "1of2/wiki_89"
+  },
+  {
+    "question": "What was the name of the event that Co Rentmeester covered as a photojournalist before the Vietnam War?",
+    "missing_detail": "previous event covered by Co Rentmeester",
+    "source_file": "2of2/wiki_27"
+  },
+  {
+    "question": "What is the total capacity of the two reactors at Dungeness B power station in megawatts?",
+    "missing_detail": "reactor capacity",
+    "source_file": "2of2/wiki_16"
+  },
+  {
+    "question": "What is the name of the specific flavonoid compound found in Black Elderberries that has been found to have a more potent antiviral effect than Echinacea?",
+    "missing_detail": "specific flavonoid compound",
+    "source_file": "1of2/wiki_20"
+  },
+  {
+    "question": "What was the name of the story that the 1946 movie Undercurrent was based on, before it was adapted into a screenplay?",
+    "missing_detail": "original story name",
+    "source_file": "2of2/wiki_35"
+  },
+  {
+    "question": "What was the exact percentage of Londoners who used the London Underground daily during Livingstone's first term?",
+    "missing_detail": "transportation usage percentage",
+    "source_file": "1of2/wiki_43"
+  },
+  {
+    "question": "What is the estimated percentage of thalamic nuclei connected to the cerebral cortex?",
+    "missing_detail": "thalamic nuclei connection percentage",
+    "source_file": "1of2/wiki_77"
+  },
+  {
+    "question": "In what year did Hamilton Academical F.C. win promotion from SFL Division 1 to the Scottish Premier League?",
+    "missing_detail": "year of promotion to Scottish Premier League",
+    "source_file": "1of2/wiki_39"
+  }
+]
